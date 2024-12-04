@@ -38,6 +38,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	k8syaml "k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
+	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/kustomize/api/resmap"
 	"sigs.k8s.io/kustomize/api/resource"
@@ -70,6 +71,7 @@ var defaultTimeout = 80 * time.Second
 // and overlays the manifests with the resources specified in the resourcesPath
 type Builder struct {
 	client            client.WithWatch
+	targetClient      client.Client
 	restMapper        meta.RESTMapper
 	name              string
 	namespace         string
@@ -146,6 +148,29 @@ func WithClientConfig(rcg *genericclioptions.ConfigFlags, clientOpts *runclient.
 		b.client = kubeClient
 		b.restMapper = restMapper
 		b.namespace = *rcg.Namespace
+		return nil
+	}
+}
+
+// WithClientConfig sets the client configuration
+func WithTargetClientConfig(path string) BuilderOptionFunc {
+	return func(b *Builder) error {
+		if path == "" {
+			return nil
+		}
+		clientConfig := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
+			&clientcmd.ClientConfigLoadingRules{ExplicitPath: path},
+			nil,
+		)
+		config, err := clientConfig.ClientConfig()
+		if err != nil {
+			return err
+		}
+		kubeClient, err := client.New(config, client.Options{})
+		if err != nil {
+			return err
+		}
+		b.targetClient = kubeClient
 		return nil
 	}
 }

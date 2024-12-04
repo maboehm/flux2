@@ -62,6 +62,7 @@ type diffKsFlags struct {
 	strictSubst       bool
 	recursive         bool
 	localSources      map[string]string
+	targetKubeconfig  string
 }
 
 var diffKsArgs diffKsFlags
@@ -75,6 +76,8 @@ func init() {
 		"When enabled, the post build substitutions will fail if a var without a default value is declared in files but is missing from the input vars.")
 	diffKsCmd.Flags().BoolVarP(&diffKsArgs.recursive, "recursive", "r", false, "Recursively diff Kustomizations")
 	diffKsCmd.Flags().StringToStringVar(&diffKsArgs.localSources, "local-sources", nil, "Comma-separated list of repositories in format: Kind/namespace/name=path")
+	diffKsCmd.Flags().StringVar(&diffKsArgs.targetKubeconfig, "target-kubeconfig", "", "Path to the kubeconfig that will be used instead of the in-cluster secret, if the kustomization specifies a different kubeconfig.")
+
 	diffCmd.AddCommand(diffKsCmd)
 }
 
@@ -98,35 +101,22 @@ func diffKsCmdRun(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	var (
-		builder *build.Builder
-		err     error
-	)
+	opts := []build.BuilderOptionFunc{
+		build.WithClientConfig(kubeconfigArgs, kubeclientOptions),
+		build.WithTargetClientConfig(diffKsArgs.targetKubeconfig),
+		build.WithTimeout(rootArgs.timeout),
+		build.WithKustomizationFile(diffKsArgs.kustomizationFile),
+		build.WithIgnore(diffKsArgs.ignorePaths),
+		build.WithStrictSubstitute(diffKsArgs.strictSubst),
+		build.WithRecursive(diffKsArgs.recursive),
+		build.WithLocalSources(diffKsArgs.localSources),
+		build.WithSingleKustomization(),
+	}
 	if diffKsArgs.progressBar {
-		builder, err = build.NewBuilder(name, diffKsArgs.path,
-			build.WithClientConfig(kubeconfigArgs, kubeclientOptions),
-			build.WithTimeout(rootArgs.timeout),
-			build.WithKustomizationFile(diffKsArgs.kustomizationFile),
-			build.WithProgressBar(),
-			build.WithIgnore(diffKsArgs.ignorePaths),
-			build.WithStrictSubstitute(diffKsArgs.strictSubst),
-			build.WithRecursive(diffKsArgs.recursive),
-			build.WithLocalSources(diffKsArgs.localSources),
-			build.WithSingleKustomization(),
-		)
-	} else {
-		builder, err = build.NewBuilder(name, diffKsArgs.path,
-			build.WithClientConfig(kubeconfigArgs, kubeclientOptions),
-			build.WithTimeout(rootArgs.timeout),
-			build.WithKustomizationFile(diffKsArgs.kustomizationFile),
-			build.WithIgnore(diffKsArgs.ignorePaths),
-			build.WithStrictSubstitute(diffKsArgs.strictSubst),
-			build.WithRecursive(diffKsArgs.recursive),
-			build.WithLocalSources(diffKsArgs.localSources),
-			build.WithSingleKustomization(),
-		)
+		opts = append(opts, build.WithProgressBar())
 	}
 
+	builder, err := build.NewBuilder(name, diffKsArgs.path, opts...)
 	if err != nil {
 		return &RequestError{StatusCode: 2, Err: err}
 	}

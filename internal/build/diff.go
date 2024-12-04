@@ -35,11 +35,13 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/errors"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/yaml"
 
 	"github.com/fluxcd/cli-utils/pkg/kstatus/polling"
 	"github.com/fluxcd/cli-utils/pkg/object"
 	kustomizev1 "github.com/fluxcd/kustomize-controller/api/v1"
+	runtimeclient "github.com/fluxcd/pkg/runtime/client"
 	"github.com/fluxcd/pkg/ssa"
 	ssautil "github.com/fluxcd/pkg/ssa/utils"
 
@@ -47,13 +49,40 @@ import (
 )
 
 func (b *Builder) Manager() (*ssa.ResourceManager, error) {
-	statusPoller := polling.NewStatusPoller(b.client, b.restMapper, polling.Options{})
+	var targetClient client.Client = b.client
+	restMapper := b.restMapper
+
+	if b.kustomization.Spec.KubeConfig != nil {
+		if b.targetClient != nil {
+			targetClient = b.targetClient
+			restMapper = b.targetClient.RESTMapper()
+		}
+		if targetClient == nil {
+			imp := runtimeclient.NewImpersonator(
+				b.client,
+				nil,
+				polling.Options{},
+				b.kustomization.Spec.KubeConfig,
+				runtimeclient.KubeConfigOptions{},
+				"",
+				"",
+				b.kustomization.Namespace,
+			)
+			var err error
+			targetClient, _, err = imp.GetClient(context.Background())
+			if err != nil {
+				return nil, err
+			}
+			restMapper = targetClient.RESTMapper()
+		}
+	}
+	statusPoller := polling.NewStatusPoller(targetClient, restMapper, polling.Options{})
 	owner := ssa.Owner{
 		Field: controllerName,
 		Group: controllerGroup,
 	}
 
-	return ssa.NewResourceManager(b.client, statusPoller, owner), nil
+	return ssa.NewResourceManager(targetClient, statusPoller, owner), nil
 }
 
 func (b *Builder) Diff() (string, bool, error) {
